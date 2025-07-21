@@ -21,6 +21,189 @@ void DFRobotC4001Hub::set_occupancy(bool occupancy) {
 #endif
 }
 
+void DFRobotC4001Hub::set_max_range(float max, bool needs_save) {
+#ifdef USE_NUMBER
+  if (this->max_range_number_ != nullptr) {
+    this->max_range_number_->publish_state(max);
+  }
+  if (this->min_range_number_ != nullptr) {
+    if (this->min_range_ > max) {
+      this->min_range_ = max;
+      this->min_range_number_->publish_state(max);
+    }
+  }
+  if (this->trigger_range_number_ != nullptr) {
+    if (this->trigger_range_ > max) {
+      this->trigger_range_ = max;
+      this->trigger_range_number_->publish_state(max);
+    }
+  }
+#endif
+  this->max_range_ = max;
+  if (needs_save) {
+    this->set_needs_save(true);
+  }
+}
+
+void DFRobotC4001Hub::set_min_range(float min, bool needs_save) {
+#ifdef USE_NUMBER
+  if (this->min_range_number_ != nullptr) {
+    this->min_range_number_->publish_state(min);
+  }
+  if (this->max_range_number_ != nullptr) {
+    if (this->max_range_ < min) {
+      this->max_range_ = min;
+      this->max_range_number_->publish_state(min);
+    }
+  }
+  if (this->trigger_range_number_ != nullptr) {
+    if (this->trigger_range_ < min) {
+      this->trigger_range_ = min;
+      this->trigger_range_number_->publish_state(min);
+    }
+  }
+#endif
+  this->min_range_ = min;
+  if (needs_save) {
+    this->set_needs_save(true);
+  }
+}
+void DFRobotC4001Hub::set_trigger_range(float trig, bool needs_save) {
+  if (this->mode_ == MODE_PRESENCE) {
+#ifdef USE_NUMBER
+    if (this->trigger_range_number_ != nullptr) {
+      this->trigger_range_number_->publish_state(trig);
+    }
+    if (this->min_range_number_ != nullptr) {
+      if (this->min_range_ > trig) {
+        this->min_range_ = trig;
+        this->min_range_number_->publish_state(trig);
+      }
+    }
+    if (this->max_range_number_ != nullptr) {
+      if (this->max_range_ < trig) {
+        this->max_range_ = trig;
+        this->max_range_number_->publish_state(trig);
+      }
+    }
+#endif
+    this->trigger_range_ = trig;
+    if (needs_save) {
+      this->set_needs_save(true);
+    }
+  }
+}
+
+void DFRobotC4001Hub::set_hold_sensitivity(float value, bool needs_save) {
+  if (this->mode_ == MODE_PRESENCE) {
+    this->hold_sensitivity_ = value;
+#ifdef USE_NUMBER
+    if (this->hold_sensitivity_number_ != nullptr) {
+      this->hold_sensitivity_number_->publish_state(value);
+    }
+#endif
+    if (needs_save) {
+      this->set_needs_save(true);
+    }
+  }
+}
+
+void DFRobotC4001Hub::set_trigger_sensitivity(float value, bool needs_save) {
+  if (this->mode_ == MODE_PRESENCE) {
+    this->trigger_sensitivity_ = value;
+#ifdef USE_NUMBER
+    if (this->trigger_sensitivity_number_ != nullptr) {
+      this->trigger_sensitivity_number_->publish_state(value);
+    }
+#endif
+    if (needs_save) {
+      this->set_needs_save(true);
+    }
+  }
+}
+
+void DFRobotC4001Hub::set_on_latency(float value, bool needs_save) {
+  if (this->mode_ == MODE_PRESENCE) {
+    this->on_latency_ = value;
+#ifdef USE_NUMBER
+    if (this->on_latency_number_ != nullptr) {
+      this->on_latency_number_->publish_state(value);
+    }
+#endif
+    if (needs_save) {
+      this->set_needs_save(true);
+    }
+  }
+}
+
+void DFRobotC4001Hub::set_off_latency(float value, bool needs_save) {
+  if (this->mode_ == MODE_PRESENCE) {
+    this->off_latency_ = value;
+#ifdef USE_NUMBER
+    if (this->off_latency_number_ != nullptr) {
+      this->off_latency_number_->publish_state(value);
+    }
+#endif
+    if (needs_save) {
+      this->set_needs_save(true);
+    }
+  }
+}
+
+void DFRobotC4001Hub::set_inhibit_time(float value, bool needs_save) {
+  if (this->mode_ == MODE_PRESENCE) {
+    this->inhibit_time_ = value;
+#ifdef USE_NUMBER
+    if (this->inhibit_time_number_ != nullptr) {
+      this->inhibit_time_number_->publish_state(value);
+    }
+#endif
+    if (needs_save) {
+      this->set_needs_save(true);
+    }
+  }
+}
+
+void DFRobotC4001Hub::set_threshold_factor(float value, bool needs_save) {
+  if (this->mode_ == MODE_SPEED_AND_DISTANCE) {
+    this->threshold_factor_ = value;
+#ifdef USE_NUMBER
+    if (this->threshold_factor_number_ != nullptr) {
+      this->threshold_factor_number_->publish_state(this->threshold_factor_);
+    }
+#endif
+    if (needs_save) {
+      this->set_needs_save(true);
+    }
+  }
+}
+
+void DFRobotC4001Hub::set_software_version(char *version) {
+  std::string new_string(version);
+#ifdef USE_TEXT_SENSOR
+  if (this->software_version_text_sensor_ != nullptr) {
+    this->software_version_text_sensor_->publish_state(new_string);
+  }
+#endif
+  this->sw_version_ = std::move(new_string);
+}
+
+void DFRobotC4001Hub::set_hardware_version(char *version) {
+  std::string new_string(version);
+  if (str_startswith(new_string, "JYSJ_428")) {
+    this->hw_model_ = MODEL_SEN0609;
+  } else if (str_startswith(new_string, "JYSJ_426")) {
+    this->hw_model_ = MODEL_SEN0610;
+  } else {
+    this->hw_model_ = MODEL_UNKNOWN;
+  }
+#ifdef USE_TEXT_SENSOR
+  if (this->hardware_version_text_sensor_ != nullptr) {
+    this->hardware_version_text_sensor_->publish_state(new_string);
+  }
+#endif
+  this->hw_version_ = std::move(new_string);
+}
 // initial setup of module
 void DFRobotC4001Hub::setup_module() {
   // stop the module so that configuration can be set
@@ -32,11 +215,46 @@ void DFRobotC4001Hub::setup_module() {
   this->enqueue(make_unique<PowerCommand>(true));
 }
 
+void DFRobotC4001Hub::config_load() {
+  // get dfrobot_c4001 current configuration
+  // have to be in the right mode to read that mode's parameters
+  this->enqueue(make_unique<GetHWVCommand>());
+  this->enqueue(make_unique<GetSWVCommand>());
+  if (this->min_range_number_ != nullptr)
+    this->enqueue(make_unique<GetRangeCommand>());
+  if (this->trigger_range_number_ != nullptr)
+    this->enqueue(make_unique<GetTrigRangeCommand>());
+  if ((this->hold_sensitivity_number_ != nullptr) || (this->trigger_sensitivity_number_ != nullptr))
+    this->enqueue(make_unique<GetSensitivityCommand>());
+  if ((this->on_latency_number_ != nullptr) || (this->off_latency_number_ != nullptr))
+    this->enqueue(make_unique<GetLatencyCommand>());
+  if (this->inhibit_time_number_ != nullptr)
+    this->enqueue(make_unique<GetInhibitTimeCommand>());
+
+  this->set_needs_save(false);
+}
+
 void DFRobotC4001Hub::dump_config() {
-  ESP_LOGCONFIG(TAG, "DFRobot C4001 mmWave Radar:\n");
+  ESP_LOGCONFIG(TAG,
+                "DFRobot C4001 mmWave Radar:\n"
+                "  SW Version: %s\n"
+                "  HW Version: %s\n",
+                this->sw_version_.c_str(), this->hw_version_.c_str());
 #ifdef USE_BINARY_SENSOR
   ESP_LOGCONFIG(TAG, "Binary Sensors:");
   LOG_BINARY_SENSOR("  ", "Occupancy", this->occupancy_binary_sensor_);
+  LOG_BINARY_SENSOR("  ", "Config Changed", this->config_changed_binary_sensor_);
+#endif
+#ifdef USE_NUMBER
+  ESP_LOGCONFIG(TAG, "Numbers:");
+  LOG_NUMBER("  ", "Maximum Range", this->max_range_number_);
+  LOG_NUMBER("  ", "Minimum Range", this->min_range_number_);
+  LOG_NUMBER("  ", "Trigger Range", this->trigger_range_number_);
+  LOG_NUMBER("  ", "Hold Sensitivity", this->hold_sensitivity_number_);
+  LOG_NUMBER("  ", "Trigger Sensitivity", this->trigger_sensitivity_number_);
+  LOG_NUMBER("  ", "On Latency", this->on_latency_number_);
+  LOG_NUMBER("  ", "Off Latency", this->off_latency_number_);
+  LOG_NUMBER("  ", "Inhibit Time", this->inhibit_time_number_);
 #endif
 }
 
@@ -45,6 +263,7 @@ void DFRobotC4001Hub::setup() {
   // setup the module
   this->enqueue(make_unique<ResetSystemCommand>());
   this->setup_module();
+  this->config_load();
 }
 
 void DFRobotC4001Hub::loop() {

@@ -46,6 +46,92 @@ class ReadStateCommand : public Command {
 class PowerCommand : public Command {
  public:
   PowerCommand(bool power_on);
+  class GetRangeCommand : public Command {
+   public:
+    GetRangeCommand();
+    void on_message() override;
+
+   protected:
+    optional<float> min_range_;
+    optional<float> max_range_;
+  };
+
+  class SetRangeCommand : public Command {
+   public:
+    SetRangeCommand(float min_range, float max_range);
+  };
+
+  class GetTrigRangeCommand : public Command {
+   public:
+    GetTrigRangeCommand();
+    void on_message() override;
+
+   protected:
+    optional<float> trigger_range_;
+  };
+
+  class SetTrigRangeCommand : public Command {
+   public:
+    SetTrigRangeCommand(float trigger_range);
+  };
+
+  class GetSensitivityCommand : public Command {
+   public:
+    GetSensitivityCommand();
+    void on_message() override;
+
+   protected:
+    optional<float> hold_sensitivity_;
+    optional<float> trigger_sensitivity_;
+  };
+
+  class SetSensitivityCommand : public Command {
+   public:
+    SetSensitivityCommand(float hold_sensitivity, float trigger_sensitivity);
+  };
+
+  class GetLatencyCommand : public Command {
+   public:
+    GetLatencyCommand();
+    void on_message() override;
+
+   protected:
+    optional<float> on_latency_;
+    optional<float> off_latency_;
+  };
+
+  class SetLatencyCommand : public Command {
+   public:
+    SetLatencyCommand(float on_latency, float off_latency);
+  };
+
+  class GetInhibitTimeCommand : public Command {
+   public:
+    GetInhibitTimeCommand();
+    void on_message() override;
+
+   protected:
+    optional<float> inhibit_time_;
+  };
+
+  class SetInhibitTimeCommand : public Command {
+   public:
+    SetInhibitTimeCommand(float inhibit_time);
+  };
+
+  class GetThrFactorCommand : public Command {
+   public:
+    GetThrFactorCommand();
+    void on_message() override;
+
+   protected:
+    optional<float> threshold_factor_;
+  };
+
+  class SetThrFactorCommand : public Command {
+   public:
+    SetThrFactorCommand(float threshold_factor);
+  };
 };
 
 class SetUartOutputCommand : public Command {
