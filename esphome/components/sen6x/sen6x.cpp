@@ -133,7 +133,6 @@ void Sen6xComponent::internal_setup_(SetupStates state) {
         return;
       }
       this->serial_number_ = convert_to_string(string_number, 16);
-      ESP_LOGV(TAG, "Serial number %s", this->serial_number_.c_str());
       this->set_timeout(20, [this]() { this->internal_setup_(SM_GET_PN); });
       break;
     case SM_GET_PN:
@@ -160,7 +159,6 @@ void Sen6xComponent::internal_setup_(SetupStates state) {
       }
       this->firmware_minor_ = firmware & 0xFF;
       this->firmware_major_ = firmware >> 8;
-      ESP_LOGV(TAG, "Firmware version %u.%u", this->firmware_major_, this->firmware_minor_);
       this->set_timeout(20, [this]() { this->internal_setup_(SM_SET_VOCB); });
       break;
     case SM_SET_VOCB:
@@ -262,7 +260,6 @@ void Sen6xComponent::internal_setup_(SetupStates state) {
       this->set_timeout(2000, [this]() { this->internal_setup_(SM_START_MEAS); });
       break;
     case SM_START_MEAS:
-      // Finally start sensor measurements
       if (!this->start_measurements_()) {
         ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
         this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
@@ -281,22 +278,18 @@ void Sen6xComponent::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "SEN6X:\n"
                 "  Initialized: %s\n"
-                "  Address: 0x%02X\n"
                 "  Model: %s\n"
                 "  Update Interval: %ums\n"
-                "  Product name: %s\n"
                 "  Serial number: %s\n"
                 "  Firmware version: %u.%u\n",
-                TRUEFALSE(this->initialized_), this->address_, model_to_str(this->model_.value()),
-                this->update_interval_, this->product_name_.c_str(), this->serial_number_.c_str(),
-                this->firmware_major_, this->firmware_minor_);
+                TRUEFALSE(this->initialized_), model_to_str(this->model_.value()), this->update_interval_,
+                this->serial_number_.c_str(), this->firmware_major_, this->firmware_minor_);
   LOG_SENSOR("  ", "PM  1.0", this->pm_1_0_sensor_);
   LOG_SENSOR("  ", "PM  2.5", this->pm_2_5_sensor_);
   LOG_SENSOR("  ", "PM  4.0", this->pm_4_0_sensor_);
   LOG_SENSOR("  ", "PM 10.0", this->pm_10_0_sensor_);
   LOG_SENSOR("  ", "Temperature", this->temperature_sensor_);
   LOG_SENSOR("  ", "Humidity", this->humidity_sensor_);
-  LOG_SENSOR("  ", "HCHO", this->hcho_sensor_);
   LOG_SENSOR("  ", "VOC", this->voc_sensor_);
   LOG_SENSOR("  ", "NOx", this->nox_sensor_);
   LOG_SENSOR("  ", "CO₂", this->co2_sensor_);
@@ -311,14 +304,14 @@ void Sen6xComponent::dump_config() {
       }
     }
   }
+  LOG_SENSOR("  ", "HCHO", this->hcho_sensor_);
 }
 
 void Sen6xComponent::update() {
   if (!this->initialized_) {
     return;
   }
-  // Store baselines after defined interval or if the difference between current and stored baseline becomes too
-  // much
+  // Store baselines after defined interval or if the diff between current and stored baseline becomes too much
   if (this->store_voc_baseline_ && this->seconds_since_last_store_ > SHORTEST_BASELINE_STORE_INTERVAL) {
     if (this->write_command(CMD_VOC_ALGORITHM_STATE)) {
       // run it a bit later to avoid adding a delay here
@@ -501,11 +494,12 @@ bool Sen6xComponent::write_tuning_parameters_(uint16_t i2c_command, const GasTun
 }
 
 bool Sen6xComponent::write_temperature_compensation_(const TemperatureCompensation &compensation) {
-  uint16_t params[3];
-  params[0] = compensation.offset;
-  params[1] = compensation.normalized_offset_slope;
+  uint16_t params[4];
+  params[0] = static_cast<uint16_t>(compensation.offset);
+  params[1] = static_cast<uint16_t>(compensation.normalized_offset_slope);
   params[2] = compensation.time_constant;
-  auto result = this->write_command(CMD_TEMPERATURE_COMPENSATION, params, 3);
+  params[3] = compensation.slot;
+  auto result = this->write_command(CMD_TEMPERATURE_COMPENSATION, params, 4);
   if (!result) {
     ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
   }
@@ -521,7 +515,7 @@ bool Sen6xComponent::update_co2_ambient_pressure_compensation_(uint16_t pressure
 }
 
 bool Sen6xComponent::set_ambient_pressure_compensation(float pressure_in_hpa) {
-  if (this->model_.value() == SEN63C || this->model_.value() == SEN66) {
+  if (this->model_.value() == SEN63C || this->model_.value() == SEN66 || this->model_.value() == SEN69C) {
     uint16_t new_ambient_pressure = (uint16_t) pressure_in_hpa;
     if (!this->initialized_) {
       this->co2_ambient_pressure_ = new_ambient_pressure;
@@ -608,14 +602,13 @@ bool Sen6xComponent::activate_heater() {
 bool Sen6xComponent::perform_forced_co2_calibration(uint16_t co2) {
   if (this->model_.value() == SEN63C || this->model_.value() == SEN66 || this->model_.value() == SEN69C) {
     ESP_LOGD(TAG, "Perform forced CO₂ calibration started, target co2=%d", co2);
-    this->initialized_ = false;  // prevent update from trying to read the sensors
-    // measurements must be stopped
-    if (!this->stop_measurements_()) {
+    this->initialized_ = false;         // prevent update from trying to read the sensors
+    if (!this->stop_measurements_()) {  // measurements must be stopped
       ESP_LOGE(TAG, "Perform forced CO₂ calibration failed");
       this->initialized_ = true;
       return false;
     }
-    this->set_timeout(1000, [this, co2]() {
+    this->set_timeout(1400, [this, co2]() {
       if (!this->write_command(CMD_PERFORM_FORCED_CO2_RECAL, co2)) {
         ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
         if (!this->running_) {

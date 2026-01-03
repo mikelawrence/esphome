@@ -58,8 +58,7 @@ struct TemperatureCompensation {
   }
 };
 
-// Shortest time interval of 3H for storing baseline values.
-// Prevents wear of the flash because of too many write operations
+// Shortest time interval of 3H for storing baseline values. Prevents wear of the flash
 static const uint32_t SHORTEST_BASELINE_STORE_INTERVAL = 10800;
 // Store anyway if the baseline difference exceeds the max storage diff value
 static const uint32_t MAXIMUM_STORAGE_DIFF = 50;
@@ -159,6 +158,5 @@ class Sen6xComponent : public PollingComponent, public sensirion_common::Sensiri
   std::string serial_number_ = "Unknown";
   Sen6xBaselines voc_baselines_storage_;
 };
-
 }  // namespace sen6x
 }  // namespace esphome
