@@ -145,7 +145,8 @@ void Sen6xComponent::internal_setup_(SetupStates state) {
       if (this->voc_sensor_ && this->store_voc_baseline_) {
         // Hash with config hash, version, and serial number, ensures the baseline storage is cleared after OTA
         // Serial numbers are unique to each sensor, so multiple sensors can be used without conflict
-        uint32_t hash = fnv1a_hash_extend(App.get_config_version_hash(), this->serial_number_);
+        uint32_t hash = fnv1_hash(App.get_compilation_time_ref() + this->serial_number_);
+        // uint32_t hash = fnv1a_hash_extend(App.get_config_version_hash(), this->serial_number_);
         this->pref_ = global_preferences->make_preference<Sen6xBaselines>(hash, true);
         if (this->pref_.load(&this->voc_baselines_storage_)) {
           ESP_LOGV(TAG, "Loaded VOC baseline state0: 0x%04" PRIX32 ", state1: 0x%04" PRIX32,
