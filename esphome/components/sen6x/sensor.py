@@ -60,20 +60,14 @@ sen6x_ns = cg.esphome_ns.namespace("sen6x")
 Sen6xComponent = sen6x_ns.class_(
     "Sen6xComponent", cg.PollingComponent, sensirion_common.SensirionI2CDevice
 )
-Sen5xModel = sen6x_ns.enum("Sen5xModel")
+Sen6xModel = sen6x_ns.enum("Sen6xModel")
 RhtAccelerationMode = sen6x_ns.enum("RhtAccelerationMode")
 
 
 CONF_ACCELERATION_MODE = "acceleration_mode"
-CONF_AUTO_CLEANING_INTERVAL = "auto_cleaning_interval"
-CONF_K = "k"
 CONF_HCHO = "hcho"
-CONF_P = "p"
-CONF_T1 = "t1"
-CONF_T2 = "t2"
 ICON_MOLECULE = "mdi:molecule"
 
-# Actions
 StartFanAction = sen6x_ns.class_("StartFanAction", automation.Action)
 ActivateHeaterAction = sen6x_ns.class_("ActivateHeaterAction", automation.Action)
 PerformForcedCo2CalibrationAction = sen6x_ns.class_(
@@ -91,12 +85,12 @@ MODEL_SEN68 = "SEN68"
 MODEL_SEN69C = "SEN69C"
 
 SEN6X_MODELS = {
-    MODEL_SEN62: Sen5xModel.SEN62,
-    MODEL_SEN63C: Sen5xModel.SEN63C,
-    MODEL_SEN65: Sen5xModel.SEN65,
-    MODEL_SEN66: Sen5xModel.SEN66,
-    MODEL_SEN68: Sen5xModel.SEN68,
-    MODEL_SEN69C: Sen5xModel.SEN69C,
+    MODEL_SEN62: Sen6xModel.SEN62,
+    MODEL_SEN63C: Sen6xModel.SEN63C,
+    MODEL_SEN65: Sen6xModel.SEN65,
+    MODEL_SEN66: Sen6xModel.SEN66,
+    MODEL_SEN68: Sen6xModel.SEN68,
+    MODEL_SEN69C: Sen6xModel.SEN69C,
 }
 
 
@@ -142,16 +136,6 @@ def _gas_sensor(
     )
 
 
-TEMPERATURE_COMPENSATION_SCHEMA = cv.Schema(
-    {
-        cv.Optional(CONF_OFFSET, default=0): cv.float_range(min=-163.84, max=163.835),
-        cv.Optional(CONF_NORMALIZED_OFFSET_SLOPE, default=0): cv.float_range(
-            min=-3.2768, max=3.2767
-        ),
-        cv.Optional(CONF_TIME_CONSTANT, default=0): cv.int_range(min=0, max=0xFFFF),
-    }
-)
-
 CO2_SENSOR_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_AUTOMATIC_SELF_CALIBRATION, default=True): cv.boolean,
@@ -171,7 +155,6 @@ CONFIG_SCHEMA = (
         {
             cv.GenerateID(): cv.declare_id(Sen6xComponent),
             cv.Required(CONF_MODEL): cv.enum(SEN6X_MODELS, upper=True),
-            cv.Optional(CONF_AUTO_CLEANING_INTERVAL): cv.update_interval,
             cv.Optional(CONF_TEMPERATURE_COMPENSATION): cv.Schema(
                 {
                     cv.Optional(CONF_OFFSET, default=0): cv.float_,
