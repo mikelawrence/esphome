@@ -62,24 +62,6 @@ static inline const char *model_to_str(Sen6xType model) {
   }
 }
 
-static inline Sen6xType str_to_model(const std::string &product_name) {
-  if (product_name == "SEN62") {
-    return SEN62;
-  } else if (product_name == "SEN63C") {
-    return SEN63C;
-  } else if (product_name == "SEN65") {
-    return SEN65;
-  } else if (product_name == "SEN66") {
-    return SEN66;
-  } else if (product_name == "SEN68") {
-    return SEN68;
-  } else if (product_name == "SEN69C") {
-    return SEN69C;
-  } else {
-    return UNKNOWN_MODEL;
-  }
-}
-
 static inline std::string convert_to_string(uint16_t array[], uint8_t length) {
   for (int i = 0; i < length; i++) {
     array[i] = convert_big_endian(array[i]);
@@ -88,25 +70,23 @@ static inline std::string convert_to_string(uint16_t array[], uint8_t length) {
   return new_string;
 }
 
-void Sen6xComponent::setup() { this->internal_setup_(SM_START); }
+void Sen6xComponent::setup() {
+  this->set_timeout(100, [this]() { this->internal_setup_(SM_START); });
+}
 
 void Sen6xComponent::internal_setup_(SetupStates state) {
   uint16_t string_number[16] = {0};
   switch (state) {
     case SM_START:
-      // the sensor needs 100 ms after power up before i2c bus communication can be established
-      this->set_timeout(100, [this]() { this->internal_setup_(SM_START_1); });
-      break;
-    case SM_START_1:
       // Check if measurement is ready before reading the value
       if (!this->write_command(CMD_GET_DATA_READY_STATUS)) {
         ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
         this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
         return;
       }
-      this->set_timeout(20, [this]() { this->internal_setup_(SM_START_2); });
+      this->set_timeout(20, [this]() { this->internal_setup_(SM_START_1); });
       break;
-    case SM_START_2:
+    case SM_START_1:
       uint16_t raw_read_status;
       if (!this->read_data(raw_read_status)) {
         ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
@@ -163,8 +143,7 @@ void Sen6xComponent::internal_setup_(SetupStates state) {
       break;
     case SM_SET_VOCB:
       if (this->voc_sensor_ && this->store_voc_baseline_) {
-        // Hash with config hash, version, and serial number
-        // This ensures the baseline storage is cleared after OTA
+        // Hash with config hash, version, and serial number, ensures the baseline storage is cleared after OTA
         // Serial numbers are unique to each sensor, so multiple sensors can be used without conflict
         uint32_t hash = fnv1a_hash_extend(App.get_config_version_hash(), this->serial_number_);
         this->pref_ = global_preferences->make_preference<Sen6xBaselines>(hash, true);

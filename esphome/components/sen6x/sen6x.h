@@ -14,7 +14,6 @@ enum Sen6xType { SEN62, SEN63C, SEN65, SEN66, SEN68, SEN69C, UNKNOWN_MODEL };
 enum SetupStates {
   SM_START,
   SM_START_1,
-  SM_START_2,
   SM_GET_SN,
   SM_GET_PN,
   SM_GET_FW,
