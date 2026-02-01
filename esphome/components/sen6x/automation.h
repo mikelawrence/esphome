@@ -12,5 +12,52 @@ template<typename... Ts> class StartFanCleaningAction : public Action<Ts...>, pu
   void play(const Ts &...x) override { this->parent_->start_fan_cleaning(); }
 };
 
+template<typename... Ts> class ActivateHeaterAction : public Action<Ts...>, public Parented<Sen6xComponent> {
+ public:
+  void play(const Ts &...x) override { this->parent_->activate_heater(); }
+};
+
+template<typename... Ts>
+class SetAmbientPressureCompensationAction : public Action<Ts...>, public Parented<Sen6xComponent> {
+ public:
+  void play(const Ts &...x) override {
+    auto value = this->value_.value(x...);
+    this->parent_->set_ambient_pressure_compensation(value);
+  }
+
+ protected:
+  TEMPLATABLE_VALUE(uint16_t, value)
+};
+
+template<typename... Ts>
+class PerformForcedCo2RecalibrationAction : public Action<Ts...>, public Parented<Sen6xComponent> {
+ public:
+  void play(const Ts &...x) override {
+    auto value = this->value_.value(x...);
+    this->parent_->perform_forced_co2_recalibration(value);
+  }
+
+ protected:
+  TEMPLATABLE_VALUE(uint16_t, value)
+};
+
+template<typename... Ts>
+class SetTemperatureCompensationAction : public Action<Ts...>, public Parented<Sen6xComponent> {
+ public:
+  void play(const Ts &...x) override {
+    auto offset = this->offset_.value(x...);
+    auto normalized_offset_slope = this->normalized_offset_slope_.value(x...);
+    auto time_constant = this->time_constant_.value(x...);
+    auto slot = this->slot_.value(x...);
+    this->parent_->set_temperature_compensation(offset, normalized_offset_slope, time_constant, slot);
+  }
+
+ protected:
+  TEMPLATABLE_VALUE(float, offset)
+  TEMPLATABLE_VALUE(float, normalized_offset_slope)
+  TEMPLATABLE_VALUE(uint16_t, time_constant)
+  TEMPLATABLE_VALUE(uint8_t, slot)
+};
+
 }  // namespace sen6x
 }  // namespace esphome

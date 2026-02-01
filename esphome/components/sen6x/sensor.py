@@ -1,21 +1,34 @@
 from esphome import automation
+from esphome.automation import maybe_simple_id
 import esphome.codegen as cg
 from esphome.components import i2c, sensirion_common, sensor
 import esphome.config_validation as cv
 from esphome.const import (
+    CONF_ALGORITHM_TUNING,
     CONF_ALTITUDE_COMPENSATION,
     CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE,
     CONF_AUTOMATIC_SELF_CALIBRATION,
     CONF_CO2,
+    CONF_GAIN_FACTOR,
+    CONF_GATING_MAX_DURATION_MINUTES,
     CONF_HUMIDITY,
     CONF_ID,
+    CONF_INDEX_OFFSET,
+    CONF_LEARNING_TIME_GAIN_HOURS,
+    CONF_LEARNING_TIME_OFFSET_HOURS,
+    CONF_NORMALIZED_OFFSET_SLOPE,
     CONF_NOX,
+    CONF_OFFSET,
     CONF_PM_1_0,
     CONF_PM_2_5,
     CONF_PM_4_0,
     CONF_PM_10_0,
+    CONF_STD_INITIAL,
     CONF_TEMPERATURE,
+    CONF_TEMPERATURE_COMPENSATION,
+    CONF_TIME_CONSTANT,
     CONF_TYPE,
+    CONF_VALUE,
     CONF_VOC,
     DEVICE_CLASS_AQI,
     DEVICE_CLASS_CARBON_DIOXIDE,
@@ -47,6 +60,7 @@ Sen6xComponent = sen6x_ns.class_(
 )
 Sen6xType = sen6x_ns.enum("Sen6xType", is_class=True)
 
+
 CONF_K = "k"
 CONF_HCHO = "hcho"
 ICON_MOLECULE = "mdi:molecule"
@@ -60,6 +74,76 @@ CONF_TEMPERATURE_ACCELERATION = "temperature_acceleration"
 # Actions
 StartFanCleaningAction = sen6x_ns.class_("StartFanCleaningAction", automation.Action)
 ActivateHeaterAction = sen6x_ns.class_("ActivateHeaterAction", automation.Action)
+PerformForcedCo2RecalibrationAction = sen6x_ns.class_(
+    "PerformForcedCo2RecalibrationAction", automation.Action
+)
+SetAmbientPressureCompensationAction = sen6x_ns.class_(
+    "SetAmbientPressureCompensationAction", automation.Action
+)
+SetTemperatureCompensationAction = sen6x_ns.class_(
+    "SetTemperatureCompensationAction", automation.Action
+)
+
+SEN62 = "SEN62"
+SEN63C = "SEN63C"
+SEN65 = "SEN65"
+SEN66 = "SEN66"
+SEN68 = "SEN68"
+SEN69C = "SEN69C"
+
+SEN6X_TYPES = {
+    SEN62: Sen6xType.SEN62,
+    SEN63C: Sen6xType.SEN63C,
+    SEN65: Sen6xType.SEN65,
+    SEN66: Sen6xType.SEN66,
+    SEN68: Sen6xType.SEN68,
+    SEN69C: Sen6xType.SEN69C,
+}
+
+
+def _gas_sensor(
+    *,
+    index_offset: int,
+    learning_time_offset: int,
+    learning_time_gain: int,
+    gating_max_duration: int,
+    std_initial: int,
+    gain_factor: int,
+) -> cv.Schema:
+    return sensor.sensor_schema(
+        icon=ICON_RADIATOR,
+        accuracy_decimals=0,
+        device_class=DEVICE_CLASS_AQI,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ).extend(
+        {
+            cv.Optional(CONF_ALGORITHM_TUNING): cv.Schema(
+                {
+                    cv.Optional(CONF_INDEX_OFFSET, default=index_offset): cv.int_range(
+                        min=1, max=250
+                    ),
+                    cv.Optional(
+                        CONF_LEARNING_TIME_OFFSET_HOURS, default=learning_time_offset
+                    ): cv.int_range(min=1, max=1000),
+                    cv.Optional(
+                        CONF_LEARNING_TIME_GAIN_HOURS, default=learning_time_gain
+                    ): cv.int_range(min=1, max=1000),
+                    cv.Optional(
+                        CONF_GATING_MAX_DURATION_MINUTES, default=gating_max_duration
+                    ): cv.int_range(min=0, max=3000),
+                    cv.Optional(CONF_STD_INITIAL, default=std_initial): cv.int_range(
+                        min=10, max=5000
+                    ),
+                    cv.Optional(CONF_GAIN_FACTOR, default=gain_factor): cv.int_range(
+                        min=1, max=1000
+                    ),
+                }
+            )
+        }
+    )
+
+
+GROUP_COMPENSATION = "Compensation Group: 'altitude_compensation' and 'ambient_pressure_compensation_source'"
 
 BASE_SCHEMA = (
     cv.Schema(
@@ -106,6 +190,23 @@ BASE_SCHEMA = (
                 device_class=DEVICE_CLASS_HUMIDITY,
                 state_class=STATE_CLASS_MEASUREMENT,
             ),
+            cv.Optional(CONF_TEMPERATURE_COMPENSATION): cv.Schema(
+                {
+                    cv.Required(CONF_OFFSET): cv.float_range(min=-100.0, max=100.0),
+                    cv.Required(CONF_NORMALIZED_OFFSET_SLOPE): cv.float_range(
+                        min=-3.2768, max=3.2767
+                    ),
+                    cv.Required(CONF_TIME_CONSTANT): cv.int_range(min=0, max=65565),
+                }
+            ),
+            cv.Optional(CONF_TEMPERATURE_ACCELERATION): cv.Schema(
+                {
+                    cv.Required(CONF_K): cv.float_range(min=0.0, max=6535.5),
+                    cv.Required(CONF_P): cv.float_range(min=0.0, max=6535.5),
+                    cv.Required(CONF_T1): cv.float_range(min=0.0, max=6535.5),
+                    cv.Required(CONF_T2): cv.float_range(min=0.0, max=6535.5),
+                }
+            ),
         }
     )
     .extend(cv.polling_component_schema("60s"))
@@ -126,12 +227,13 @@ CO2_SCHEMA = cv.Schema(
                     cv.Optional(
                         CONF_AUTOMATIC_SELF_CALIBRATION, default=True
                     ): cv.boolean,
-                    cv.Optional(CONF_ALTITUDE_COMPENSATION): cv.int_range(
-                        min=0, max=3000
-                    ),
-                    cv.Optional(CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE): cv.use_id(
-                        sensor.Sensor
-                    ),
+                    cv.Exclusive(
+                        CONF_ALTITUDE_COMPENSATION, GROUP_COMPENSATION
+                    ): cv.int_range(min=0, max=3000),
+                    cv.Exclusive(
+                        CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE,
+                        GROUP_COMPENSATION,
+                    ): cv.use_id(sensor.Sensor),
                 }
             )
         ),
@@ -140,11 +242,13 @@ CO2_SCHEMA = cv.Schema(
 
 VOC_SCHEMA = cv.Schema(
     {
-        cv.Optional(CONF_VOC): sensor.sensor_schema(
-            icon=ICON_RADIATOR,
-            accuracy_decimals=0,
-            device_class=DEVICE_CLASS_AQI,
-            state_class=STATE_CLASS_MEASUREMENT,
+        cv.Optional(CONF_VOC): _gas_sensor(
+            index_offset=100,
+            learning_time_offset=12,
+            learning_time_gain=12,
+            gating_max_duration=180,
+            std_initial=50,
+            gain_factor=230,
         ).extend(
             cv.Schema(
                 {
@@ -157,11 +261,13 @@ VOC_SCHEMA = cv.Schema(
 
 NOX_SCHEMA = cv.Schema(
     {
-        cv.Optional(CONF_NOX): sensor.sensor_schema(
-            icon=ICON_RADIATOR,
-            accuracy_decimals=0,
-            device_class=DEVICE_CLASS_AQI,
-            state_class=STATE_CLASS_MEASUREMENT,
+        cv.Optional(CONF_NOX): _gas_sensor(
+            index_offset=1,
+            learning_time_offset=12,
+            learning_time_gain=12,
+            gating_max_duration=720,
+            std_initial=50,
+            gain_factor=230,
         ),
     }
 )
@@ -182,14 +288,26 @@ SEN65_SCHEMA = BASE_SCHEMA.extend(VOC_SCHEMA).extend(NOX_SCHEMA)
 CONFIG_SCHEMA = cv.Schema(
     cv.typed_schema(
         {
-            "SEN62": BASE_SCHEMA,
-            "SEN63C": BASE_SCHEMA.extend(CO2_SCHEMA),
-            "SEN65": SEN65_SCHEMA,
-            "SEN66": SEN65_SCHEMA.extend(CO2_SCHEMA),
-            "SEN68": SEN65_SCHEMA.extend(HCHO_SCHEMA),
-            "SEN69C": SEN65_SCHEMA.extend(CO2_SCHEMA).extend(HCHO_SCHEMA),
+            SEN62: BASE_SCHEMA,
+            SEN63C: BASE_SCHEMA.extend(CO2_SCHEMA),
+            SEN65: SEN65_SCHEMA,
+            SEN66: SEN65_SCHEMA.extend(CO2_SCHEMA),
+            SEN68: SEN65_SCHEMA.extend(HCHO_SCHEMA),
+            SEN69C: SEN65_SCHEMA.extend(CO2_SCHEMA).extend(HCHO_SCHEMA),
         },
         upper=True,
+    ),
+    cv.has_at_least_one_key(
+        CONF_PM_1_0,
+        CONF_PM_2_5,
+        CONF_PM_4_0,
+        CONF_PM_10_0,
+        CONF_TEMPERATURE,
+        CONF_HUMIDITY,
+        CONF_VOC,
+        CONF_NOX,
+        CONF_CO2,
+        CONF_HCHO,
     ),
 )
 
@@ -211,22 +329,62 @@ CO2_SETTING_MAP = {
     CONF_ALTITUDE_COMPENSATION: "set_altitude_compensation",
 }
 
-FINAL_VALIDATE_SCHEMA = i2c.final_validate_device_schema(
-    "sen6x", max_frequency="100kHz"
-)
+
+def final_validate(config):
+    i2c.final_validate_device_schema("sen6x", max_frequency="100kHz")(config)
+
+
+FINAL_VALIDATE_SCHEMA = final_validate
 
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await i2c.register_i2c_device(var, config)
-    cg.add(var.set_type(getattr(Sen6xType, config[CONF_TYPE])))
+    cg.add(var.set_type(SEN6X_TYPES[config[CONF_TYPE]]))
     for key, funcName in SENSOR_MAP.items():
         if cfg := config.get(key):
             sens = await sensor.new_sensor(cfg)
             cg.add(getattr(var, funcName)(sens))
+    if cfg := config.get(CONF_VOC, {}).get(CONF_ALGORITHM_TUNING):
+        cg.add(
+            var.set_voc_algorithm_tuning(
+                cfg[CONF_INDEX_OFFSET],
+                cfg[CONF_LEARNING_TIME_OFFSET_HOURS],
+                cfg[CONF_LEARNING_TIME_GAIN_HOURS],
+                cfg[CONF_GATING_MAX_DURATION_MINUTES],
+                cfg[CONF_STD_INITIAL],
+                cfg[CONF_GAIN_FACTOR],
+            )
+        )
     if cfg := config.get(CONF_VOC, {}).get(CONF_STORE_ALGORITHM_STATE):
         cg.add(var.set_store_voc_algorithm_state(cfg))
+    if cfg := config.get(CONF_NOX, {}).get(CONF_ALGORITHM_TUNING):
+        cg.add(
+            var.set_nox_algorithm_tuning(
+                cfg[CONF_INDEX_OFFSET],
+                cfg[CONF_LEARNING_TIME_OFFSET_HOURS],
+                cfg[CONF_GATING_MAX_DURATION_MINUTES],
+                cfg[CONF_GAIN_FACTOR],
+            )
+        )
+    if cfg := config.get(CONF_TEMPERATURE_COMPENSATION):
+        cg.add(
+            var.set_temperature_compensation(
+                cfg[CONF_OFFSET],
+                cfg[CONF_NORMALIZED_OFFSET_SLOPE],
+                cfg[CONF_TIME_CONSTANT],
+            )
+        )
+    if cfg := config.get(CONF_TEMPERATURE_ACCELERATION):
+        cg.add(
+            var.set_temperature_acceleration(
+                cfg[CONF_K],
+                cfg[CONF_P],
+                cfg[CONF_T1],
+                cfg[CONF_T2],
+            )
+        )
     if cfg := config.get(CONF_CO2):
         for key, funcName in CO2_SETTING_MAP.items():
             if setting := config.get(key):
@@ -234,3 +392,98 @@ async def to_code(config):
         if source := cfg.get(CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE):
             sens = await cg.get_variable(source)
             cg.add(var.set_ambient_pressure_compensation_source(sens))
+
+
+SEN6X_ACTION_SCHEMA = maybe_simple_id({cv.GenerateID(): cv.use_id(Sen6xComponent)})
+
+
+@automation.register_action(
+    "sen6x.start_fan_cleaning", StartFanCleaningAction, SEN6X_ACTION_SCHEMA
+)
+async def sen6x_fan_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+@automation.register_action(
+    "sen6x.activate_heater", ActivateHeaterAction, SEN6X_ACTION_SCHEMA
+)
+async def sen6x_ah_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    return var
+
+
+SEN6X_VALUE_ACTION_SCHEMA = maybe_simple_id(
+    {
+        cv.GenerateID(): cv.use_id(Sen6xComponent),
+        cv.Required(CONF_VALUE): cv.templatable(cv.positive_int),
+    }
+)
+
+
+@automation.register_action(
+    "sen6x.perform_forced_co2_recalibration",
+    PerformForcedCo2RecalibrationAction,
+    SEN6X_VALUE_ACTION_SCHEMA,
+)
+async def sen6x_pfcc_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    template = await cg.templatable(config[CONF_VALUE], args, cg.uint16)
+    cg.add(var.set_value(template))
+    return var
+
+
+@automation.register_action(
+    "sen6x.set_ambient_pressure_compensation",
+    SetAmbientPressureCompensationAction,
+    SEN6X_VALUE_ACTION_SCHEMA,
+)
+async def sen6x_saph_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    template = await cg.templatable(config[CONF_VALUE], args, cg.uint16)
+    cg.add(var.set_value(template))
+    return var
+
+
+SEN6X_TEMPERATURE_COMPENSATION_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(Sen6xComponent),
+        cv.Optional(CONF_OFFSET, default=0.0): cv.templatable(
+            cv.float_range(min=-100.0, max=100.0)
+        ),
+        cv.Optional(CONF_NORMALIZED_OFFSET_SLOPE, default=0.0): cv.templatable(
+            cv.float_range(min=-3.0000, max=3.0000)
+        ),
+        cv.Optional(CONF_TIME_CONSTANT, default=0): cv.templatable(
+            cv.int_range(min=0, max=65535),
+        ),
+        cv.Optional(CONF_SLOT, default=0): cv.templatable(cv.int_range(0, 4)),
+    }
+)
+
+
+@automation.register_action(
+    "sen6x.set_temperature_compensation",
+    SetTemperatureCompensationAction,
+    SEN6X_TEMPERATURE_COMPENSATION_SCHEMA,
+)
+async def sen6x_stc_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    if cfg := config.get(CONF_OFFSET):
+        template = await cg.templatable(cfg, args, cg.float_)
+        cg.add(var.set_offset(template))
+    if cfg := config.get(CONF_NORMALIZED_OFFSET_SLOPE):
+        template = await cg.templatable(cfg, args, cg.float_)
+        cg.add(var.set_normalized_offset_slope(template))
+    if cfg := config.get(CONF_TIME_CONSTANT):
+        template = await cg.templatable(cfg, args, cg.uint16)
+        cg.add(var.set_time_constant(template))
+    if cfg := config.get(CONF_SLOT):
+        template = await cg.templatable(cfg, args, cg.uint8)
+        cg.add(var.set_slot(template))
+    return var
