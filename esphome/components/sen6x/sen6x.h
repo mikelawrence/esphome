@@ -10,25 +10,6 @@
 namespace esphome {
 namespace sen6x {
 
-enum class SetupStates : uint8_t {
-  SM_START,
-  SM_START_1,
-  SM_GET_SN,
-  SM_GET_SN_1,
-  SM_GET_PN,
-  SM_GET_FW,
-  SM_SET_ACCEL,
-  SM_SET_VOCB,
-  SM_SET_VOCT,
-  SM_SET_NOXT,
-  SM_SET_TP,
-  SM_SET_CO2ASC,
-  SM_SET_CO2AC,
-  SM_SENSOR_CHECK,
-  SM_START_MEAS,
-  SM_DONE
-};
-
 enum class Sen6xType : uint8_t { SEN62, SEN63C, SEN65, SEN66, SEN68, SEN69C, UNKNOWN };
 
 struct GasTuning {
@@ -135,14 +116,25 @@ class Sen6xComponent : public PollingComponent, public sensirion_common::Sensiri
   bool busy() { return this->busy_ || this->updating_; };
 
  protected:
-  void internal_setup_(SetupStates state);
   bool has_co2_() const;
-  bool start_measurements_();
-  bool stop_measurements_();
-  bool write_tuning_parameters_(uint16_t i2c_command, const GasTuning &tuning);
-  bool write_temperature_compensation_(const TemperatureCompensation &compensation);
-  bool write_temperature_acceleration_();
-  bool write_ambient_pressure_compensation_(uint16_t pressure_in_hpa);
+  bool start_measurements_(uint8_t retries = 5);
+  bool stop_measurements_(uint8_t retries = 5);
+  bool write_tuning_parameters_(uint16_t i2c_command, const GasTuning &tuning, uint8_t retries = 5);
+  bool write_temperature_compensation_(const TemperatureCompensation &compensation, uint8_t retries = 5);
+  bool write_temperature_acceleration_(uint8_t retries = 5);
+  bool write_ambient_pressure_compensation_(uint16_t pressure_in_hpa, uint8_t retries = 5);
+
+  template<class T> bool write_command_retry_(T i2c_register, uint8_t retry) {
+    return this->write_command_retry_(i2c_register, nullptr, 0, retry);
+  }
+  template<class T> bool write_command_retry_(T i2c_register, uint16_t data, uint8_t retry) {
+    return this->write_command_retry_(i2c_register, &data, 1, retry);
+  }
+  template<class T> bool write_command_retry_(T i2c_register, const uint16_t *data, uint8_t len, uint8_t retry);
+
+  // bool read_data_retry_(uint16_t *data, uint8_t len, uint8_t retry = 5);
+
+  bool get_register_retry_(uint16_t reg, uint16_t *data, const uint8_t len, const uint8_t retry = 5);
 
   char serial_number_[17] = "UNKNOWN";
   uint16_t voc_algorithm_state_[4]{0};

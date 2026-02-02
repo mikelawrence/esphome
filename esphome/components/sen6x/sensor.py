@@ -325,7 +325,7 @@ SENSOR_MAP = {
 }
 
 CO2_SETTING_MAP = {
-    CONF_AUTOMATIC_SELF_CALIBRATION: "set_automatic_self_calibrate",
+    CONF_AUTOMATIC_SELF_CALIBRATION: "set_automatic_self_calibration",
     CONF_ALTITUDE_COMPENSATION: "set_altitude_compensation",
 }
 
@@ -387,7 +387,7 @@ async def to_code(config):
         )
     if cfg := config.get(CONF_CO2):
         for key, funcName in CO2_SETTING_MAP.items():
-            if setting := config.get(key):
+            if setting := cfg.get(key):
                 cg.add(getattr(var, funcName)(setting))
         if source := cfg.get(CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE):
             sens = await cg.get_variable(source)
