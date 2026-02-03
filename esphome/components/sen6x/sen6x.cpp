@@ -109,7 +109,7 @@ void Sen6xComponent::setup() {
     // Check if measurement is ready before reading the value
     if (!this->get_register(CMD_GET_DATA_READY_STATUS, &raw_string[0], 1, 5)) {
       ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-      this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+      this->mark_failed();
       return;
     }
     ESP_LOGW(TAG, "Get Data Ready Retries: %d", this->retry_count_);
@@ -119,7 +119,7 @@ void Sen6xComponent::setup() {
       // you cannot start measurements for 1400ms, but you can issues other commands
       if (!this->stop_measurements_()) {
         ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-        this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+        this->mark_failed();
         return;
       }
     }
@@ -128,7 +128,7 @@ void Sen6xComponent::setup() {
     // Serial numbers are currently only 16 chars long, same on label, this could change
     if (!this->get_register(CMD_GET_SERIAL_NUMBER, raw_string, 8, 0, 5)) {
       ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-      this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+      this->mark_failed();
       return;
     }
     // *serial_number is not null terminated, snprintf takes care of this
@@ -140,7 +140,7 @@ void Sen6xComponent::setup() {
     // 16 chars is more than enough room for the at most 6 chars plus null
     if (!this->get_register(CMD_GET_PRODUCT_NAME, raw_string, 8, 0, 5)) {
       ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-      this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+      this->mark_failed();
       return;
     }
     const char *product_name = sensirion_convert_to_string_in_place(raw_string, 8);
@@ -160,10 +160,11 @@ void Sen6xComponent::setup() {
 
     auto block_time_1 = millis() - start1;
     this->set_timeout(0, [this, block_time_1]() {  // release block and come back shortly
+      auto start2 = millis();
       uint16_t firmware;
       if (!this->get_register(CMD_GET_FIRMWARE_VERSION, &firmware, 1, 0, 5)) {
         ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-        this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+        this->mark_failed();
         return;
       }
       this->firmware_minor_ = firmware & 0xFF;
@@ -190,12 +191,11 @@ void Sen6xComponent::setup() {
           }
         }
       }
-      auto start2 = millis();
       if (this->temperature_acceleration_.has_value()) {
         ESP_LOGD(TAG, "1");
         if (!this->write_temperature_acceleration_()) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+          this->mark_failed();
           return;
         }
       }
@@ -204,7 +204,7 @@ void Sen6xComponent::setup() {
         ESP_LOGD(TAG, "2");
         if (!this->write_tuning_parameters_(CMD_VOC_ALGORITHM_TUNING, this->voc_tuning_params_.value(), 5)) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+          this->mark_failed();
           return;
         }
       }
@@ -213,7 +213,7 @@ void Sen6xComponent::setup() {
         ESP_LOGD(TAG, "3");
         if (!this->write_tuning_parameters_(CMD_NOX_ALGORITHM_TUNING, this->nox_tuning_params_.value(), 5)) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+          this->mark_failed();
           return;
         }
       }
@@ -222,7 +222,7 @@ void Sen6xComponent::setup() {
         ESP_LOGD(TAG, "4");
         if (!this->write_temperature_compensation_(this->temperature_compensation_.value(), 5)) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+          this->mark_failed();
           return;
         }
       }
@@ -231,7 +231,7 @@ void Sen6xComponent::setup() {
         ESP_LOGD(TAG, "5");
         if (!this->write_command(CMD_CO2_SENSOR_AUTO_SELF_CAL, this->auto_self_calibration_.value() ? 0x01 : 0x00, 5)) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+          this->mark_failed();
           return;
         }
       }
@@ -240,16 +240,16 @@ void Sen6xComponent::setup() {
         ESP_LOGD(TAG, "6");
         if (!this->write_command(CMD_SENSOR_ALTITUDE, this->altitude_compensation_.value(), 5)) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+          this->mark_failed();
           return;
         }
       }
       ESP_LOGW(TAG, "Write Altitude Compensation Retries: %d", this->retry_count_);
       auto block_time_2 = millis() - start2;
-      this->set_timeout(1400 - block_time_1, [this, block_time_1, block_time_2]() {
+      this->set_timeout(1400 - (block_time_1 + block_time_2), [this, block_time_1, block_time_2]() {
         if (!this->start_measurements_()) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+          this->mark_failed();
           return;
         }
         ESP_LOGW(TAG, "Start Measurements Retries: %d", this->retry_count_);
@@ -382,7 +382,7 @@ void Sen6xComponent::update() {
   }
   if (!this->write_command(cmd)) {
     ESP_LOGV(TAG, "Write Read Measurement command failed");
-    this->status_set_warning(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+    this->status_set_warning();
     this->updating_ = false;
     return;
   }
@@ -390,7 +390,7 @@ void Sen6xComponent::update() {
     uint16_t measurements[10];
     if (!this->read_data(measurements, length)) {
       ESP_LOGV(TAG, "Read Read Measurement data failed");
-      this->status_set_warning(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+      this->status_set_warning();
       this->updating_ = false;
       return;
     }
@@ -496,7 +496,7 @@ void Sen6xComponent::update() {
           uint16_t new_ambient_pressure = static_cast<uint16_t>(pressure);
           if (!write_ambient_pressure_compensation_(new_ambient_pressure)) {
             ESP_LOGV(TAG, "Write Ambient Pressure Compensation command failed");
-            this->status_set_warning(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+            this->status_set_warning();
             this->updating_ = false;
             return;
           }
