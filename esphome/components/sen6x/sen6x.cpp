@@ -246,7 +246,7 @@ void Sen6xComponent::setup() {
       }
       ESP_LOGW(TAG, "Write Altitude Compensation Retries: %d", this->retry_count_);
       auto block_time_2 = millis() - start2;
-      this->set_timeout(1400 - (block_time_1 + block_time_2), [this, block_time_1, block_time_2]() {
+      this->set_timeout(1400, [this, block_time_1, block_time_2]() {
         if (!this->start_measurements_()) {
           ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed();
