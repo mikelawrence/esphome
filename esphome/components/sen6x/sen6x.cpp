@@ -71,35 +71,35 @@ static inline const char *sensirion_convert_to_string_in_place(uint16_t *array, 
   return reinterpret_cast<const char *>(array);
 }
 
-template<class T>
-bool Sen6xComponent::write_command_retry_(T i2c_register, const uint16_t *data, uint8_t len, uint8_t retry) {
-  // limit to 8 or 16 bit only
-  static_assert(sizeof(i2c_register) == 1 || sizeof(i2c_register) == 2, "Only 8 or 16 bit command types supported");
-  uint8_t cur_retry = 0;
-  while (!this->write_command(i2c_register, data, len)) {
-    if (cur_retry++ >= retry) {
-      return false;
-    }
-    delay(1);
-  }
-  ESP_LOGV(TAG, "Write Command Retry: Retries=%d", cur_retry);
-  return true;
-}
+// template<class T>
+// bool Sen6xComponent::write_command(T i2c_register, const uint16_t *data, uint8_t len, uint8_t retry) {
+//   // limit to 8 or 16 bit only
+//   static_assert(sizeof(i2c_register) == 1 || sizeof(i2c_register) == 2, "Only 8 or 16 bit command types supported");
+//   uint8_t cur_retry = 0;
+//   while (!this->write_command(i2c_register, data, len)) {
+//     if (cur_retry++ >= retry) {
+//       return false;
+//     }
+//     delay(1);
+//   }
+//   ESP_LOGV(TAG, "Write Command Retry: Retries=%d", cur_retry);
+//   return true;
+// }
 
-bool Sen6xComponent::get_register_retry_(uint16_t reg, uint16_t *data, const uint8_t len, const uint8_t retry) {
-  if (!this->write_command_retry_(reg, retry)) {
-    return false;
-  }
-  uint8_t cur_retry = 0;
-  while (!this->read_data(data, len)) {
-    if (cur_retry++ >= retry) {
-      return false;
-    }
-    delay(1);
-  }
-  ESP_LOGV(TAG, "Get Register Retry: Retries=%d", cur_retry);
-  return true;
-}
+// bool Sen6xComponent::get_register(uint16_t reg, uint16_t *data, const uint8_t len, const uint8_t retry) {
+//   if (!this->write_command(reg, retry)) {
+//     return false;
+//   }
+//   uint8_t cur_retry = 0;
+//   while (!this->read_data(data, len)) {
+//     if (cur_retry++ >= retry) {
+//       return false;
+//     }
+//     delay(1);
+//   }
+//   ESP_LOGV(TAG, "Get Register Retry: Retries=%d", cur_retry);
+//   return true;
+// }
 
 void Sen6xComponent::setup() {
   // the sensor needs 100 ms after power up before i2c bus communication can be established
@@ -107,25 +107,27 @@ void Sen6xComponent::setup() {
     auto start1 = millis();
     uint16_t raw_string[8];
     // Check if measurement is ready before reading the value
-    if (!this->get_register_retry_(CMD_GET_DATA_READY_STATUS, raw_string, 1, 5)) {
-      ESP_LOGE(TAG, "Get Data Ready Status failed");
+    if (!this->get_register(CMD_GET_DATA_READY_STATUS, &raw_string[0], 1, 5)) {
+      ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
       this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
       return;
     }
+    ESP_LOGW(TAG, "Get Data Ready Retries: %d", this->retry_count_);
     if (raw_string[0]) {
       ESP_LOGV(TAG, "Stopping periodic measurement");
       // In order to query the device periodic measurement must be ceased, after this command
       // you cannot start measurements for 1400ms, but you can issues other commands
       if (!this->stop_measurements_()) {
-        ESP_LOGE(TAG, "Stop Measurements failed");
+        ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
         this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
         return;
       }
     }
+    ESP_LOGW(TAG, "Stop Measurement Retries: %d", this->retry_count_);
 
     // Serial numbers are currently only 16 chars long, same on label, this could change
-    if (!this->get_register_retry_(CMD_GET_SERIAL_NUMBER, raw_string, 8, 5)) {
-      ESP_LOGE(TAG, "Get Serial Number failed");
+    if (!this->get_register(CMD_GET_SERIAL_NUMBER, raw_string, 8, 0, 5)) {
+      ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
       this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
       return;
     }
@@ -133,17 +135,18 @@ void Sen6xComponent::setup() {
     const char *serial_number = sensirion_convert_to_string_in_place(raw_string, 8);
     snprintf(this->serial_number_, sizeof(this->serial_number_), "%s", serial_number);
     ESP_LOGV(TAG, "Read Serial Number: %s", this->serial_number_);
+    ESP_LOGW(TAG, "Get Serial Number Retries: %d", this->retry_count_);
 
     // 16 chars is more than enough room for the at most 6 chars plus null
-    if (!this->get_register_retry_(CMD_GET_PRODUCT_NAME, raw_string, 8, 5)) {
-      ESP_LOGE(TAG, "Get Product Name failed");
+    if (!this->get_register(CMD_GET_PRODUCT_NAME, raw_string, 8, 0, 5)) {
+      ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
       this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
       return;
     }
     const char *product_name = sensirion_convert_to_string_in_place(raw_string, 8);
     if (strlen(product_name) == 0) {
       // Can't verify configuration type matches connected sensor
-      ESP_LOGW(TAG, "Product Name is empty");
+      ESP_LOGW(TAG, ESP_LOG_MSG_COMM_FAIL);
     } else {
       // product name and type must match
       if (strncmp(product_name, LOG_STR_ARG(type_to_string(this->type_.value())), 5) != 0) {
@@ -153,95 +156,103 @@ void Sen6xComponent::setup() {
       }
     }
     ESP_LOGV(TAG, "Read Product Name: %.32s", product_name);
+    ESP_LOGW(TAG, "Get Product Name Retries: %d", this->retry_count_);
 
-    uint16_t firmware;
-    if (!this->get_register_retry_(CMD_GET_FIRMWARE_VERSION, &firmware, 1, 5)) {
-      ESP_LOGE(TAG, "Get Firmware failed");
-      this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
-      return;
-    }
-    this->firmware_minor_ = firmware & 0xFF;
-    this->firmware_major_ = firmware >> 8;
-    ESP_LOGV(TAG, "Read Firmware version: %u.%u", this->firmware_major_, this->firmware_minor_);
-
-    if (this->store_voc_algorithm_state_.has_value() && this->store_voc_algorithm_state_.value()) {
-      // Hash with serial number. Serial numbers are unique, so multiple sensors can be used without conflict
-      uint32_t hash = fnv1a_hash(this->serial_number_);
-      // algorithm state is actually uint8_t[8] but uint16_t[4] is the way this data is received from the sensor
-      this->pref_ = global_preferences->make_preference<uint16_t[4]>(hash, true);
-      this->voc_algorithm_time_ = App.get_loop_component_start_time();
-      if (this->pref_.load(&this->voc_algorithm_state_)) {
-        if (!this->write_command_retry_(CMD_VOC_ALGORITHM_STATE, this->voc_algorithm_state_, 4, 5)) {
-          ESP_LOGE(TAG, "VOC Algorithm State write to sensor failed");
-          this->voc_algorithm_error_ = true;
-        } else {
-#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
-          char hex_buf[5 * 4];
-          format_hex_pretty_to(hex_buf, this->voc_algorithm_state_, 4, 0);
-          ESP_LOGV(TAG, "VOC Algorithm State loaded: %s", hex_buf);
-#endif
-        }
-      }
-    }
     auto block_time_1 = millis() - start1;
     this->set_timeout(0, [this, block_time_1]() {  // release block and come back shortly
+      uint16_t firmware;
+      if (!this->get_register(CMD_GET_FIRMWARE_VERSION, &firmware, 1, 0, 5)) {
+        ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
+        this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
+        return;
+      }
+      this->firmware_minor_ = firmware & 0xFF;
+      this->firmware_major_ = firmware >> 8;
+      ESP_LOGV(TAG, "Read Firmware version: %u.%u", this->firmware_major_, this->firmware_minor_);
+      ESP_LOGW(TAG, "Get Firmware Version Retries: %d", this->retry_count_);
+
+      if (this->store_voc_algorithm_state_.has_value() && this->store_voc_algorithm_state_.value()) {
+        // Hash with serial number. Serial numbers are unique, so multiple sensors can be used without conflict
+        uint32_t hash = fnv1a_hash(this->serial_number_);
+        // algorithm state is actually uint8_t[8] but uint16_t[4] is the way this data is received from the sensor
+        this->pref_ = global_preferences->make_preference<uint16_t[4]>(hash, true);
+        this->voc_algorithm_time_ = App.get_loop_component_start_time();
+        if (this->pref_.load(&this->voc_algorithm_state_)) {
+          if (!this->write_command(CMD_VOC_ALGORITHM_STATE, this->voc_algorithm_state_, 4, 5)) {
+            ESP_LOGV(TAG, "VOC Algorithm State write to sensor failed");
+            this->voc_algorithm_error_ = true;
+          } else {
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
+            char hex_buf[5 * 4];
+            format_hex_pretty_to(hex_buf, this->voc_algorithm_state_, 4, 0);
+            ESP_LOGV(TAG, "VOC Algorithm State loaded: %s", hex_buf);
+#endif
+          }
+        }
+      }
       auto start2 = millis();
       if (this->temperature_acceleration_.has_value()) {
         ESP_LOGD(TAG, "1");
         if (!this->write_temperature_acceleration_()) {
-          ESP_LOGE(TAG, "Write Temperature Acceleration parameters failed");
+          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
           return;
         }
       }
+      ESP_LOGW(TAG, "Write Temperature Acceleration Retries: %d", this->retry_count_);
       if (this->voc_tuning_params_.has_value()) {
         ESP_LOGD(TAG, "2");
         if (!this->write_tuning_parameters_(CMD_VOC_ALGORITHM_TUNING, this->voc_tuning_params_.value(), 5)) {
-          ESP_LOGE(TAG, "Write VOC Algorithm Tuning parameters failed");
+          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
           return;
         }
       }
+      ESP_LOGW(TAG, "Write VOC Tuning Parameters Retries: %d", this->retry_count_);
       if (this->nox_tuning_params_.has_value()) {
         ESP_LOGD(TAG, "3");
         if (!this->write_tuning_parameters_(CMD_NOX_ALGORITHM_TUNING, this->nox_tuning_params_.value(), 5)) {
-          ESP_LOGE(TAG, "Write NOX Algorithm Tuning parameters failed");
+          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
           return;
         }
       }
+      ESP_LOGW(TAG, "Write Temperature Compensation Retries: %d", this->retry_count_);
       if (this->temperature_compensation_.has_value()) {
         ESP_LOGD(TAG, "4");
         if (!this->write_temperature_compensation_(this->temperature_compensation_.value(), 5)) {
-          ESP_LOGE(TAG, "Write Temperature Compensation parameters failed");
+          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
           return;
         }
       }
+      ESP_LOGW(TAG, "Write Auto Self Calibration Retries: %d", this->retry_count_);
       if (this->auto_self_calibration_.has_value()) {
         ESP_LOGD(TAG, "5");
-        if (!this->write_command_retry_(CMD_CO2_SENSOR_AUTO_SELF_CAL,
-                                        this->auto_self_calibration_.value() ? 0x01 : 0x00, 5)) {
-          ESP_LOGE(TAG, "Write Automatic Self Calibration command failed");
+        if (!this->write_command(CMD_CO2_SENSOR_AUTO_SELF_CAL, this->auto_self_calibration_.value() ? 0x01 : 0x00, 5)) {
+          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
           return;
         }
       }
+      ESP_LOGW(TAG, "Write Auto Self Calibration Retries: %d", this->retry_count_);
       if (this->altitude_compensation_.has_value()) {
         ESP_LOGD(TAG, "6");
-        if (!this->write_command_retry_(CMD_SENSOR_ALTITUDE, this->altitude_compensation_.value(), 5)) {
-          ESP_LOGE(TAG, "Write Altitude Compensation command failed");
+        if (!this->write_command(CMD_SENSOR_ALTITUDE, this->altitude_compensation_.value(), 5)) {
+          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
           return;
         }
       }
+      ESP_LOGW(TAG, "Write Altitude Compensation Retries: %d", this->retry_count_);
       auto block_time_2 = millis() - start2;
       this->set_timeout(1400 - block_time_1, [this, block_time_1, block_time_2]() {
         if (!this->start_measurements_()) {
-          ESP_LOGE(TAG, "Start Measurements failed");
+          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
           this->mark_failed(LOG_STR(ESP_LOG_MSG_COMM_FAIL));
           return;
         }
+        ESP_LOGW(TAG, "Start Measurements Retries: %d", this->retry_count_);
         this->initialized_ = true;
         ESP_LOGD(TAG, "Initialized, block time %ums, %ums", block_time_1, block_time_2);
       });
@@ -501,7 +512,7 @@ bool Sen6xComponent::has_co2_() const {
 }
 
 bool Sen6xComponent::start_measurements_(uint8_t retries) {
-  auto result = this->write_command_retry_(CMD_START_MEASUREMENTS, retries);
+  auto result = this->write_command(CMD_START_MEASUREMENTS, 0, 0, retries);
   if (result) {
     this->running_ = true;
     if (this->initialized_) {
@@ -512,7 +523,7 @@ bool Sen6xComponent::start_measurements_(uint8_t retries) {
 }
 
 bool Sen6xComponent::stop_measurements_(uint8_t retries) {
-  auto result = this->write_command_retry_(CMD_STOP_MEASUREMENTS, retries);
+  auto result = this->write_command(CMD_STOP_MEASUREMENTS, retries);
   if (result) {
     this->running_ = false;
     if (this->initialized_) {
@@ -530,7 +541,7 @@ bool Sen6xComponent::write_tuning_parameters_(uint16_t i2c_command, const GasTun
   params[3] = tuning.gating_max_duration_minutes;
   params[4] = tuning.std_initial;
   params[5] = tuning.gain_factor;
-  return this->write_command_retry_(i2c_command, params, 6, retries);
+  return this->write_command(i2c_command, params, 6, retries);
 }
 
 bool Sen6xComponent::write_temperature_compensation_(const TemperatureCompensation &compensation, uint8_t retries) {
@@ -539,7 +550,7 @@ bool Sen6xComponent::write_temperature_compensation_(const TemperatureCompensati
   params[1] = static_cast<uint16_t>(compensation.normalized_offset_slope);
   params[2] = compensation.time_constant;
   params[3] = compensation.slot;
-  return this->write_command_retry_(CMD_TEMPERATURE_COMPENSATION, params, 4, retries);
+  return this->write_command(CMD_TEMPERATURE_COMPENSATION, params, 4, retries);
 }
 
 bool Sen6xComponent::write_temperature_acceleration_(uint8_t retries) {
@@ -549,13 +560,13 @@ bool Sen6xComponent::write_temperature_acceleration_(uint8_t retries) {
   params[1] = accel_param.p;
   params[2] = accel_param.t1;
   params[3] = accel_param.t2;
-  return this->write_command_retry_(CMD_TEMPERATURE_ACCEL_PARAMETERS, params, 4, retries);
+  return this->write_command(CMD_TEMPERATURE_ACCEL_PARAMETERS, params, 4, retries);
 }
 
 bool Sen6xComponent::write_ambient_pressure_compensation_(uint16_t pressure_in_hpa, uint8_t retries) {
   if (abs(this->ambient_pressure_compensation_ - pressure_in_hpa) > 1) {
     this->ambient_pressure_compensation_ = pressure_in_hpa;
-    if (!this->write_command_retry_(CMD_AMBIENT_PRESSURE, pressure_in_hpa, retries)) {
+    if (!this->write_command(CMD_AMBIENT_PRESSURE, &pressure_in_hpa, 1, retries)) {
       ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
       return false;
     }
