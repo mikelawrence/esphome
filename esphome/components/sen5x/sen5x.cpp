@@ -30,9 +30,6 @@ static const int8_t SEN5X_INDEX_SCALE_FACTOR = 10;                            //
 static const int8_t SEN5X_MIN_INDEX_VALUE = 1 * SEN5X_INDEX_SCALE_FACTOR;     // must be adjusted by the scale factor
 static const int16_t SEN5X_MAX_INDEX_VALUE = 500 * SEN5X_INDEX_SCALE_FACTOR;  // must be adjusted by the scale factor
 
-static const uint8_t SEN5X_I2C_RETRIES = 3;  // number of times to retry I2C operations
-static const uint8_t SEN5X_ZERO_DELAY = 0;   // no delay between write command and read response, use retries instead
-
 static const LogString *type_to_string(Sen5xType type) {
   switch (type) {
     case Sen5xType::SEN50:
@@ -71,90 +68,96 @@ static inline const char *sensirion_convert_to_string_in_place(uint16_t *array, 
 void SEN5XComponent::setup() {
   // the sensor needs 50 ms to enter the idle state
   this->set_timeout(60, [this]() {
-    auto start = millis();
-    uint16_t raw_read_status;
     // Check if measurement is ready before reading the value
-    if (!this->get_register(SEN5X_CMD_GET_DATA_READY_STATUS, &raw_read_status, 1, SEN5X_ZERO_DELAY,
-                            SEN5X_I2C_RETRIES)) {
-      ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
+    if (!this->write_command(SEN5X_CMD_GET_DATA_READY_STATUS)) {
+      ESP_LOGE(TAG, "Failed to write data ready status command");
       this->mark_failed();
       return;
     }
+    delay(20);  // per datasheet
+
+    uint16_t raw_read_status;
+    if (!this->read_data(raw_read_status)) {
+      ESP_LOGE(TAG, "Failed to read data ready status");
+      this->mark_failed();
+      return;
+    }
+
+    uint32_t stop_measurement_delay = 0;
+    // In order to query the device periodic measurement must be ceased
     if (raw_read_status) {
-      ESP_LOGV(TAG, "Stopping periodic measurement");
-      // In order to query the device periodic measurement must be ceased, after this command
-      // you cannot start measurements for 200ms, but you can issues other commands
-      if (!this->write_command(SEN5X_CMD_STOP_MEASUREMENTS, nullptr, 0, SEN5X_I2C_RETRIES)) {
-        ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
+      ESP_LOGD(TAG, "Data is available; stopping periodic measurement");
+      if (!this->write_command(SEN5X_CMD_STOP_MEASUREMENTS)) {
+        ESP_LOGE(TAG, "Failed to stop measurements");
         this->mark_failed();
         return;
       }
+      // According to the SEN5x datasheet the sensor will only respond to other commands after waiting 200 ms after
+      // issuing the stop_periodic_measurement command
+      stop_measurement_delay = 200;
     }
-
-    // note: serial number register is actually 32-bytes long but we grab only the first 16-bytes,
-    // this appears to be all that Sensirion uses for serial numbers, this could change
-    uint16_t raw_serial_number[8];
-    if (!this->get_register(SEN5X_CMD_GET_SERIAL_NUMBER, raw_serial_number, 8, SEN5X_ZERO_DELAY, SEN5X_I2C_RETRIES)) {
-      ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-      this->mark_failed();
-      return;
-    }
-    // *serial_number is not null terminated, snprintf takes care of this
-    const char *serial_number = sensirion_convert_to_string_in_place(raw_serial_number, 8);
-    snprintf(this->serial_number_, sizeof(this->serial_number_), "%s", serial_number);
-    ESP_LOGV(TAG, "Read Serial number: %s", this->serial_number_);
-
-    // 8 chars is more than enough room for the at most 6 chars plus null
-    uint16_t raw_product_name[4];
-    if (!this->get_register(SEN5X_CMD_GET_PRODUCT_NAME, raw_product_name, 4, SEN5X_ZERO_DELAY, SEN5X_I2C_RETRIES)) {
-      ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-      this->mark_failed();
-      return;
-    }
-    const char *product_name = sensirion_convert_to_string_in_place(raw_product_name, 4);
-    if (strncmp(product_name, "SEN50", 5) == 0) {
-      this->type_ = Sen5xType::SEN50;
-    } else if (strncmp(product_name, "SEN54", 5) == 0) {
-      this->type_ = Sen5xType::SEN54;
-    } else if (strncmp(product_name, "SEN55", 5) == 0) {
-      this->type_ = Sen5xType::SEN55;
-    } else {
-      this->type_ = Sen5xType::UNKNOWN;
-      ESP_LOGE(TAG, "Unknown product name: %.8s", product_name);
-      this->mark_failed(LOG_STR("Unknown product name"));
-      return;
-    }
-
-    ESP_LOGV(TAG, "Read Type: %s", LOG_STR_ARG(type_to_string(this->type_)));
-    if (this->humidity_sensor_ && this->type_ == Sen5xType::SEN50) {
-      ESP_LOGE(TAG, "Relative humidity requires a SEN54 or SEN55");
-      this->humidity_sensor_ = nullptr;  // mark as not used
-    }
-    if (this->temperature_sensor_ && this->type_ == Sen5xType::SEN50) {
-      ESP_LOGE(TAG, "Temperature requires a SEN54 or SEN55");
-      this->temperature_sensor_ = nullptr;  // mark as not used
-    }
-    if (this->voc_sensor_ && this->type_ == Sen5xType::SEN50) {
-      ESP_LOGE(TAG, "VOC requires a SEN54 or SEN55");
-      this->voc_sensor_ = nullptr;  // mark as not used
-    }
-    if (this->nox_sensor_ && this->type_ != Sen5xType::SEN55) {
-      ESP_LOGE(TAG, "NOx requires a SEN55");
-      this->nox_sensor_ = nullptr;  // mark as not used
-    }
-
-    ESP_LOGW(TAG, "First block: %ums", millis() - start);
-    this->set_timeout(0, [this]() {
-      auto start = millis();
-      uint16_t raw_firmware_version;
-      if (!this->get_register(SEN5X_CMD_GET_FIRMWARE_VERSION, &raw_firmware_version, 1, SEN5X_ZERO_DELAY,
-                              SEN5X_I2C_RETRIES)) {
-        ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
+    this->set_timeout(stop_measurement_delay, [this]() {
+      // note: serial number register is actually 32-bytes long but we grab only the first 16-bytes,
+      // this appears to be all that Sensirion uses for serial numbers, this could change
+      uint16_t raw_serial_number[8];
+      if (!this->get_register(SEN5X_CMD_GET_SERIAL_NUMBER, raw_serial_number, 8, 20)) {
+        ESP_LOGE(TAG, "Failed to read serial number");
+        this->error_code_ = SERIAL_NUMBER_IDENTIFICATION_FAILED;
         this->mark_failed();
         return;
       }
-      this->firmware_version_ = static_cast<uint8_t>(convert_big_endian(raw_firmware_version));
-      ESP_LOGV(TAG, "Read Firmware version: %u", this->firmware_version_);
+      const char *serial_number = sensirion_convert_to_string_in_place(raw_serial_number, 8);
+      snprintf(this->serial_number_, sizeof(this->serial_number_), "%s", serial_number);
+      ESP_LOGV(TAG, "Serial number %s", this->serial_number_);
+
+      uint16_t raw_product_name[16];
+      if (!this->get_register(SEN5X_CMD_GET_PRODUCT_NAME, raw_product_name, 16, 20)) {
+        ESP_LOGE(TAG, "Failed to read product name");
+        this->error_code_ = PRODUCT_NAME_FAILED;
+        this->mark_failed();
+        return;
+      }
+      const char *product_name = sensirion_convert_to_string_in_place(raw_product_name, 16);
+      if (strncmp(product_name, "SEN50", 5) == 0) {
+        this->type_ = Sen5xType::SEN50;
+      } else if (strncmp(product_name, "SEN54", 5) == 0) {
+        this->type_ = Sen5xType::SEN54;
+      } else if (strncmp(product_name, "SEN55", 5) == 0) {
+        this->type_ = Sen5xType::SEN55;
+      } else {
+        this->type_ = Sen5xType::UNKNOWN;
+        ESP_LOGE(TAG, "Unknown product name: %.32s", product_name);
+        this->error_code_ = PRODUCT_NAME_FAILED;
+        this->mark_failed();
+        return;
+      }
+
+      ESP_LOGD(TAG, "Type: %s", LOG_STR_ARG(type_to_string(this->type_)));
+      if (this->humidity_sensor_ && this->type_ == Sen5xType::SEN50) {
+        ESP_LOGE(TAG, "Relative humidity requires a SEN54 or SEN55");
+        this->humidity_sensor_ = nullptr;  // mark as not used
+      }
+      if (this->temperature_sensor_ && this->type_ == Sen5xType::SEN50) {
+        ESP_LOGE(TAG, "Temperature requires a SEN54 or SEN55");
+        this->temperature_sensor_ = nullptr;  // mark as not used
+      }
+      if (this->voc_sensor_ && this->type_ == Sen5xType::SEN50) {
+        ESP_LOGE(TAG, "VOC requires a SEN54 or SEN55");
+        this->voc_sensor_ = nullptr;  // mark as not used
+      }
+      if (this->nox_sensor_ && this->type_ != Sen5xType::SEN55) {
+        ESP_LOGE(TAG, "NOx requires a SEN55");
+        this->nox_sensor_ = nullptr;  // mark as not used
+      }
+
+      if (!this->get_register(SEN5X_CMD_GET_FIRMWARE_VERSION, this->firmware_version_, 20)) {
+        ESP_LOGE(TAG, "Failed to read firmware version");
+        this->error_code_ = FIRMWARE_FAILED;
+        this->mark_failed();
+        return;
+      }
+      this->firmware_version_ >>= 8;
+      ESP_LOGV(TAG, "Firmware version %d", this->firmware_version_);
 
       if (this->voc_sensor_ && this->store_baseline_) {
         // Hash with serial number, serial numbers are unique, so multiple sensors can be used without conflict
@@ -162,75 +165,80 @@ void SEN5XComponent::setup() {
         this->pref_ = global_preferences->make_preference<uint16_t[4]>(hash, true);
         this->voc_baseline_time_ = App.get_loop_component_start_time();
         if (this->pref_.load(&this->voc_baseline_state_)) {
-          if (!this->write_command(SEN5X_CMD_VOC_ALGORITHM_STATE, this->voc_baseline_state_, 4, SEN5X_I2C_RETRIES)) {
+          if (!this->write_command(SEN5X_CMD_VOC_ALGORITHM_STATE, this->voc_baseline_state_, 4)) {
             ESP_LOGE(TAG, "VOC Baseline State write to sensor failed");
-            this->voc_baseline_error_ = true;
           } else {
 #if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERBOSE
             char hex_buf[5 * 4];
             format_hex_pretty_to(hex_buf, this->voc_baseline_state_, 4, 0);
             ESP_LOGV(TAG, "VOC Baseline State loaded: %s", hex_buf);
 #endif
+            delay(20);
           }
         }
       }
+      bool result;
       if (this->auto_cleaning_interval_.has_value()) {
-        if (!this->write_command(SEN5X_CMD_AUTO_CLEANING_INTERVAL, this->auto_cleaning_interval_.value(),
-                                 SEN5X_I2C_RETRIES)) {
-          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed();
-          return;
+        // override default value
+        result = this->write_command(SEN5X_CMD_AUTO_CLEANING_INTERVAL, this->auto_cleaning_interval_.value());
+      } else {
+        result = this->write_command(SEN5X_CMD_AUTO_CLEANING_INTERVAL);
+      }
+      if (result) {
+        delay(20);
+        uint16_t secs[2];
+        if (this->read_data(secs, 2)) {
+          this->auto_cleaning_interval_ = secs[0] << 16 | secs[1];
         }
       }
       if (this->acceleration_mode_.has_value()) {
-        if (!this->write_command(SEN5X_CMD_RHT_ACCELERATION_MODE, this->acceleration_mode_.value(),
-                                 SEN5X_I2C_RETRIES)) {
-          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed();
-          return;
+        result = this->write_command(SEN5X_CMD_RHT_ACCELERATION_MODE, this->acceleration_mode_.value());
+      } else {
+        result = this->write_command(SEN5X_CMD_RHT_ACCELERATION_MODE);
+      }
+      if (!result) {
+        ESP_LOGE(TAG, "Failed to set rh/t acceleration mode");
+        this->error_code_ = COMMUNICATION_FAILED;
+        this->mark_failed();
+        return;
+      }
+      delay(20);
+      if (!this->acceleration_mode_.has_value()) {
+        uint16_t mode;
+        if (this->read_data(mode)) {
+          this->acceleration_mode_ = RhtAccelerationMode(mode);
+        } else {
+          ESP_LOGE(TAG, "Failed to read RHT Acceleration mode");
         }
       }
-      if (this->temperature_compensation_.has_value()) {
-        if (!this->write_temperature_compensation_(this->temperature_compensation_.value())) {
-          ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-          this->mark_failed();
-          return;
-        }
+      if (this->voc_tuning_params_.has_value()) {
+        this->write_tuning_parameters_(SEN5X_CMD_VOC_ALGORITHM_TUNING, this->voc_tuning_params_.value());
+        delay(20);
+      }
+      if (this->nox_tuning_params_.has_value()) {
+        this->write_tuning_parameters_(SEN5X_CMD_NOX_ALGORITHM_TUNING, this->nox_tuning_params_.value());
+        delay(20);
       }
 
-      ESP_LOGW(TAG, "Second block: %ums", millis() - start);
-      this->set_timeout(0, [this]() {  // release block and come back shortly
-        auto start = millis();
-        if (this->voc_tuning_params_.has_value()) {
-          if (!this->write_tuning_parameters_(SEN5X_CMD_VOC_ALGORITHM_TUNING, this->voc_tuning_params_.value())) {
-            ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-            this->mark_failed();
-            return;
-          }
-        }
-        if (this->nox_tuning_params_.has_value()) {
-          if (!this->write_tuning_parameters_(SEN5X_CMD_NOX_ALGORITHM_TUNING, this->nox_tuning_params_.value())) {
-            ESP_LOGE(TAG, ESP_LOG_MSG_COMM_FAIL);
-            this->mark_failed();
-            return;
-          }
-        }
-        ESP_LOGW(TAG, "Third block: %ums", millis() - start);
-        this->set_timeout(200, [this]() {
-          // Finally start sensor measurements
-          uint16_t cmd = SEN5X_CMD_START_MEASUREMENTS_RHT_ONLY;
-          if (this->pm_1_0_sensor_ || this->pm_2_5_sensor_ || this->pm_4_0_sensor_ || this->pm_10_0_sensor_) {
-            // if any of the gas sensors are active we need a full measurement
-            cmd = SEN5X_CMD_START_MEASUREMENTS;
-          }
-          if (!this->write_command(cmd, nullptr, 0, SEN5X_I2C_RETRIES)) {
-            ESP_LOGE(TAG, "Error starting continuous measurements");
-            this->mark_failed();
-            return;
-          }
-          ESP_LOGD(TAG, "Initialized");
-        });
-      });
+      if (this->temperature_compensation_.has_value()) {
+        this->write_temperature_compensation_(this->temperature_compensation_.value());
+        delay(20);
+      }
+
+      // Finally start sensor measurements
+      auto cmd = SEN5X_CMD_START_MEASUREMENTS_RHT_ONLY;
+      if (this->pm_1_0_sensor_ || this->pm_2_5_sensor_ || this->pm_4_0_sensor_ || this->pm_10_0_sensor_) {
+        // if any of the gas sensors are active we need a full measurement
+        cmd = SEN5X_CMD_START_MEASUREMENTS;
+      }
+
+      if (!this->write_command(cmd)) {
+        ESP_LOGE(TAG, "Error starting continuous measurements");
+        this->error_code_ = MEASUREMENT_INIT_FAILED;
+        this->mark_failed();
+        return;
+      }
+      this->initialized_ = true;
     });
   });
 }
@@ -238,6 +246,28 @@ void SEN5XComponent::setup() {
 void SEN5XComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "SEN5X:");
   LOG_I2C_DEVICE(this);
+  if (this->is_failed()) {
+    switch (this->error_code_) {
+      case COMMUNICATION_FAILED:
+        ESP_LOGW(TAG, ESP_LOG_MSG_COMM_FAIL);
+        break;
+      case MEASUREMENT_INIT_FAILED:
+        ESP_LOGW(TAG, "Measurement initialization failed");
+        break;
+      case SERIAL_NUMBER_IDENTIFICATION_FAILED:
+        ESP_LOGW(TAG, "Unable to read serial ID");
+        break;
+      case PRODUCT_NAME_FAILED:
+        ESP_LOGW(TAG, "Unable to read product name");
+        break;
+      case FIRMWARE_FAILED:
+        ESP_LOGW(TAG, "Unable to read firmware version");
+        break;
+      default:
+        ESP_LOGW(TAG, "Unknown setup error");
+        break;
+    }
+  }
   ESP_LOGCONFIG(TAG,
                 "  Type: %s\n"
                 "  Firmware version: %d\n"
@@ -255,9 +285,8 @@ void SEN5XComponent::dump_config() {
     format_hex_pretty_to(hex_buf, this->voc_baseline_state_, 4, 0);
     ESP_LOGCONFIG(TAG,
                   "  Store Baseline: %s\n"
-                  "    Error: %s\n"
                   "    State: %s\n",
-                  TRUEFALSE(this->store_baseline_), TRUEFALSE(this->voc_baseline_error_), hex_buf);
+                  TRUEFALSE(this->store_baseline_), hex_buf);
   }
   LOG_UPDATE_INTERVAL(this);
   LOG_SENSOR("  ", "PM  1.0", this->pm_1_0_sensor_);
@@ -352,19 +381,14 @@ void SEN5XComponent::update() {
       if (!this->write_command(SEN5X_CMD_VOC_ALGORITHM_STATE)) {
         this->status_set_warning();
         ESP_LOGW(TAG, ESP_LOG_MSG_COMM_FAIL);
-        this->voc_baseline_error_ = true;
       } else {
         this->set_timeout(20, [this]() {
           if (!this->read_data(this->voc_baseline_state_, 4)) {
+            this->status_set_warning();
             ESP_LOGW(TAG, ESP_LOG_MSG_COMM_FAIL);
-            this->voc_baseline_error_ = true;
           } else {
             if (this->pref_.save(&this->voc_baseline_state_)) {
               ESP_LOGD(TAG, "VOC Baseline State saved");
-              this->voc_baseline_error_ = false;
-            } else {
-              ESP_LOGE(TAG, "Store VOC Baseline State save failed");
-              this->voc_baseline_error_ = true;
             }
             this->status_clear_warning();
           }
@@ -382,7 +406,7 @@ bool SEN5XComponent::write_tuning_parameters_(uint16_t i2c_command, const GasTun
   params[3] = tuning.gating_max_duration_minutes;
   params[4] = tuning.std_initial;
   params[5] = tuning.gain_factor;
-  auto result = write_command(i2c_command, params, 6, SEN5X_I2C_RETRIES);
+  auto result = write_command(i2c_command, params, 6);
   if (!result) {
     ESP_LOGE(TAG, "Set tuning parameters failed (command=%0xX, err=%d)", i2c_command, this->last_error_);
   }
@@ -394,7 +418,7 @@ bool SEN5XComponent::write_temperature_compensation_(const TemperatureCompensati
   params[0] = compensation.offset;
   params[1] = compensation.normalized_offset_slope;
   params[2] = compensation.time_constant;
-  if (!write_command(SEN5X_CMD_TEMPERATURE_COMPENSATION, params, 3, SEN5X_I2C_RETRIES)) {
+  if (!write_command(SEN5X_CMD_TEMPERATURE_COMPENSATION, params, 3)) {
     ESP_LOGE(TAG, "Set temperature_compensation failed (%d)", this->last_error_);
     return false;
   }

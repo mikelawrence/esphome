@@ -105,11 +105,11 @@ class SEN5XComponent : public PollingComponent, public sensirion_common::Sensiri
   char serial_number_[17] = "UNKNOWN";
   uint16_t voc_baseline_state_[4]{0};
   uint32_t voc_baseline_time_;
-  bool voc_baseline_error_{false};
+  uint16_t firmware_version_;
+  Sen5xType type_{Sen5xType::UNKNOWN};
+  ERRORCODE error_code_;
   bool initialized_{false};
   bool store_baseline_;
-  Sen5xType type_{Sen5xType::UNKNOWN};
-  uint8_t firmware_version_;
 
   sensor::Sensor *pm_1_0_sensor_{nullptr};
   sensor::Sensor *pm_2_5_sensor_{nullptr};
