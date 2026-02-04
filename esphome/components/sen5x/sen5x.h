@@ -109,7 +109,6 @@ class SEN5XComponent : public PollingComponent, public sensirion_common::Sensiri
   bool initialized_{false};
   bool store_baseline_;
   Sen5xType type_{Sen5xType::UNKNOWN};
-  ERRORCODE error_code_;
   uint8_t firmware_version_;
 
   sensor::Sensor *pm_1_0_sensor_{nullptr};
