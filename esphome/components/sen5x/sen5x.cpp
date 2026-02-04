@@ -111,7 +111,7 @@ void SEN5XComponent::setup() {
       this->mark_failed();
       return;
     }
-    const char *product_name = sensirion_convert_to_string_in_place(raw_product_name, 8);
+    const char *product_name = sensirion_convert_to_string_in_place(raw_product_name, 4);
     if (strncmp(product_name, "SEN50", 5) == 0) {
       this->type_ = Sen5xType::SEN50;
     } else if (strncmp(product_name, "SEN54", 5) == 0) {
@@ -120,9 +120,8 @@ void SEN5XComponent::setup() {
       this->type_ = Sen5xType::SEN55;
     } else {
       this->type_ = Sen5xType::UNKNOWN;
-      ESP_LOGE(TAG, "Unknown product name: %.32s", product_name);
-      this->error_code_ = PRODUCT_NAME_FAILED;
-      this->mark_failed();
+      ESP_LOGE(TAG, "Unknown product name: %.8s", product_name);
+      this->mark_failed(LOG_STR("Unknown product name"));
       return;
     }
 
