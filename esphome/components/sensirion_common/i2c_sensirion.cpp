@@ -11,13 +11,18 @@ static const char *const TAG = "sensirion_i2c";
 // To avoid memory allocations for small writes a stack buffer is used
 static const size_t BUFFER_STACK_SIZE = 16;
 
-bool SensirionI2CDevice::read_data(uint16_t *data, const uint8_t len) {
+bool SensirionI2CDevice::read_data(uint16_t *data, const uint8_t len, const uint8_t retries) {
   const uint8_t num_bytes = len * 3;
   uint8_t buf[num_bytes];
 
-  this->last_error_ = this->read(buf, num_bytes);
-  if (this->last_error_ != i2c::ERROR_OK) {
-    return false;
+  this->retry_count_ = 0;
+  while ((this->last_error_ = this->read(buf, num_bytes)) != i2c::ERROR_OK) {
+    if (this->retry_count_ >= retries) {
+      ESP_LOGE(TAG, "Read failed: err=%d retries=%d", this->last_error_, this->retry_count_);
+      return false;
+    }
+    this->retry_count_++;
+    delay(1);
   }
 
   for (uint8_t i = 0; i < len; i++) {
@@ -38,7 +43,7 @@ bool SensirionI2CDevice::read_data(uint16_t *data, const uint8_t len) {
  * use stack array for less than 4 parameters. Most Sensirion I2C commands have less parameters
  */
 bool SensirionI2CDevice::write_command_(uint16_t command, CommandLen command_len, const uint16_t *data,
-                                        const uint8_t data_len) {
+                                        const uint8_t data_len, const uint8_t retries) {
   size_t required_buffer_len = data_len * 3 + 2;
   SmallBufferWithHeapFallback<BUFFER_STACK_SIZE> buffer(required_buffer_len);
   uint8_t *temp = buffer.get();
@@ -60,21 +65,28 @@ bool SensirionI2CDevice::write_command_(uint16_t command, CommandLen command_len
     uint8_t crc = crc8(&temp[raw_idx - 2], 2, 0xFF, CRC_POLYNOMIAL, true);
     temp[raw_idx++] = crc;
   }
-  this->last_error_ = this->write(temp, raw_idx);
+  this->retry_count_ = 0;
+  while ((this->last_error_ = this->write(temp, raw_idx)) != i2c::ERROR_OK) {
+    if (this->retry_count_ >= retries) {
+      ESP_LOGE(TAG, "Write failed: reg=0x%X (%d) err=%d retries=%d", command, command_len, this->last_error_,
+               this->retry_count_);
+      return false;
+    }
+    this->retry_count_++;
+    delay(1);
+  }
   return this->last_error_ == i2c::ERROR_OK;
 }
 
 bool SensirionI2CDevice::get_register_(uint16_t reg, CommandLen command_len, uint16_t *data, const uint8_t len,
-                                       const uint8_t delay_ms) {
-  if (!this->write_command_(reg, command_len, nullptr, 0)) {
-    ESP_LOGE(TAG, "Write failed: reg=0x%X (%d) err=%d,", reg, command_len, this->last_error_);
+                                       const uint8_t delay_ms, const uint8_t retries) {
+  if (!this->write_command_(reg, command_len, nullptr, 0, retries)) {
     return false;
   }
+  uint8_t retry_count = this->retry_count_;
   delay(delay_ms);
-  bool result = this->read_data(data, len);
-  if (!result) {
-    ESP_LOGE(TAG, "Read failed: reg=0x%X err=%d,", reg, this->last_error_);
-  }
+  bool result = this->read_data(data, len, retries);
+  this->retry_count_ += retry_count;
   return result;
 }
 
