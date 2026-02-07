@@ -78,7 +78,7 @@ bool SensirionI2CDevice::write_command_(uint16_t command, CommandLen command_len
 bool SensirionI2CDevice::get_register_(uint16_t reg, CommandLen command_len, uint16_t *data, const uint8_t len,
                                        const uint8_t delay_ms, const uint8_t retries) {
   if (!this->write_command_(reg, command_len, nullptr, 0, retries)) {
-    ESP_LOGE(TAG, "Write failed: reg=0x%X (%d) err=%d retries=%d", command, command_len, this->last_error_,
+    ESP_LOGE(TAG, "Write failed: reg=0x%X (%d) err=%d retries=%d", reg, command_len, this->last_error_,
              this->retry_count_);
     return false;
   }
@@ -89,8 +89,7 @@ bool SensirionI2CDevice::get_register_(uint16_t reg, CommandLen command_len, uin
     ESP_LOGE(TAG, "Read failed: len=%d err=%d retries=%d", len, this->last_error_, this->retry_count_);
   }
   this->retry_count_ += retry_count;
-  if (!result)
-    return result;
+  return result;
 }
 
 }  // namespace sensirion_common
